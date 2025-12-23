@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import random
 
 import numpy as np
@@ -40,11 +41,23 @@ def load_comfy_workflows(model_type: str):
             lora_template_diffusers = json.load(file)
 
         return lora_template, lora_template_diffusers
-    else:
+    elif model_type == ImageModelType.FLUX.value:
         with open(cst.LORA_FLUX_WORKFLOW_PATH, "r") as file:
             lora_template = json.load(file)
 
         return lora_template, None
+    elif model_type == ImageModelType.Z_IMAGE.value:
+        with open(cst.LORA_ZIMAGE_WORKFLOW_PATH, "r") as file:
+            lora_template = json.load(file)
+
+        return lora_template, None
+    elif model_type == ImageModelType.QWEN_IMAGE.value:
+        with open(cst.LORA_QWEN_IMAGE_WORKFLOW_PATH, "r") as file:
+            lora_template = json.load(file)
+
+        return lora_template, None
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
 
 def contains_image_files(directory: str) -> str:
@@ -77,13 +90,28 @@ def find_latest_lora_submission_name(repo_id: str) -> str:
             return file
 
     epoch_files = []
+    
     for file in model_files:
-        if "last-" in file and file.endswith(".safetensors"):
-            try:
-                epoch = int(file.split("last-")[1].split(".")[0])
+        if file.endswith(".safetensors"):
+            epoch = None
+            match = re.search(r'[-_](\d+)\.safetensors$', file)
+            if match:
+                try:
+                    epoch = int(match.group(1))
+                except ValueError:
+                    pass
+            else:
+                match = re.search(r'(\d+)\.safetensors$', file)
+                if match:
+                    try:
+                        epoch = int(match.group(1))
+                    except ValueError:
+                        pass
+            
+            if epoch is None:
+                return file
+            else:
                 epoch_files.append((epoch, file))
-            except ValueError:
-                continue
 
     if epoch_files:
         epoch_files.sort(reverse=True, key=lambda x: x[0])
@@ -93,7 +121,7 @@ def find_latest_lora_submission_name(repo_id: str) -> str:
 
 
 @retry_on_5xx()
-def is_safetensors_available(repo_id: str, model_type: str) -> tuple[bool, str | None]:
+def is_safetensors_available(repo_id: str, model_type: str) -> tuple[bool, str | None]:    
     files_metadata = hf_api.list_repo_tree(repo_id=repo_id, repo_type="model")
     check_size_in_gb = 6 if model_type == "sdxl" else 10
     total_check_size = check_size_in_gb * 1024 * 1024 * 1024
@@ -110,7 +138,13 @@ def is_safetensors_available(repo_id: str, model_type: str) -> tuple[bool, str |
 
 
 def download_base_model(repo_id: str, model_type: str, safetensors_filename: str | None = None) -> str:
-    download_dir = cst.CHECKPOINTS_SAVE_PATH if model_type == ImageModelType.SDXL.value else cst.UNET_SAVE_PATH
+    if model_type == ImageModelType.SDXL.value:
+        download_dir = cst.CHECKPOINTS_SAVE_PATH
+    elif model_type == ImageModelType.FLUX.value:
+        download_dir = cst.UNET_SAVE_PATH
+    else:
+        download_dir = cst.DIFFUSION_MODELS_PATH
+
     if safetensors_filename:
         model_path = download_from_huggingface(repo_id, safetensors_filename, download_dir)
         model_name = os.path.basename(model_path)
@@ -151,11 +185,13 @@ def edit_workflow(
             payload["Checkpoint_loader"]["inputs"]["ckpt_name"] = edit_elements.ckpt_name
         else:
             payload["Checkpoint_loader"]["inputs"]["model_path"] = edit_elements.ckpt_name
-        payload["Sampler"]["inputs"]["cfg"] = edit_elements.cfg
-
-    else:
+        payload["Sampler"]["inputs"]["cfg"] = edit_elements.cfg        
+    elif model_type == ImageModelType.FLUX.value:
         payload["Checkpoint_loader"]["inputs"]["unet_name"] = edit_elements.ckpt_name
         payload["CFG"]["inputs"]["guidance"] = edit_elements.cfg
+    else:
+        payload["Checkpoint_loader"]["inputs"]["unet_name"] = edit_elements.ckpt_name
+        payload["Sampler"]["inputs"]["cfg"] = edit_elements.cfg
 
     payload["Sampler"]["inputs"]["steps"] = edit_elements.steps
     payload["Sampler"]["inputs"]["seed"] = edit_elements.seed
@@ -255,6 +291,15 @@ def main():
         base_model_repo, model_type=model_type, safetensors_filename=safetensors_filename
     )
     logger.info("Base model downloaded")
+
+    logger.info("test_dataset_path: ", test_dataset_path)
+    logger.info("base_model_repo: ", base_model_repo)
+    logger.info("trained_lora_model_repos: ", trained_lora_model_repos)
+    logger.info("model_type: ", model_type)
+    logger.info("is_safetensors: ", is_safetensors)
+    logger.info("safetensors_filename: ", safetensors_filename)
+    logger.info("model_name_or_path: ", model_name_or_path)
+    logger.info("model_path: ", model_path)
 
     lora_repos = [m.strip() for m in trained_lora_model_repos.split(",") if m.strip()]
 
