@@ -12,7 +12,7 @@ async def get_training_repo(task_type: TournamentType) -> TrainingRepoResponse:
         return TrainingRepoResponse(
             github_repo="", commit_hash=""
         )
-    else: 
+    else:
         return TrainingRepoResponse(
             github_repo="", commit_hash=""
         )
